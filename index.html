@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MySQL DDL Schema Comparator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-800">
+
+    <!-- Header -->
+    <header class="bg-white shadow-sm sticky top-0 z-10">
+        <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="bg-blue-600 text-white p-2 rounded-lg">
+                    <i class="fa-solid fa-database"></i>
+                </div>
+                <h1 class="text-xl font-bold text-slate-900">SQL Schema Comparator</h1>
+            </div>
+            <div class="text-sm text-slate-500">
+                Client-side DDL Diff Tool
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-4 py-8">
+        
+        <!-- Input Section -->
+        <div class="grid md:grid-cols-2 gap-6 mb-8">
+            <!-- Source Input -->
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="font-semibold text-lg text-blue-700">Source Schema (Target State)</h2>
+                    <span class="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded">Reference</span>
+                </div>
+                <p class="text-sm text-slate-500 mb-4">Upload the DDL file containing the new/desired structure.</p>
+                
+                <label class="block w-full">
+                    <input type="file" id="sourceFile" accept=".sql,.txt" class="block w-full text-sm text-slate-500
+                        file:mr-4 file:py-2 file:px-4
+                        file:rounded-full file:border-0
+                        file:text-sm file:font-semibold
+                        file:bg-blue-50 file:text-blue-700
+                        hover:file:bg-blue-100
+                        cursor-pointer
+                    "/>
+                </label>
+                <div id="sourceStatus" class="mt-2 text-xs text-slate-400">No file selected</div>
+            </div>
+
+            <!-- Destination Input -->
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="font-semibold text-lg text-slate-700">Destination Schema (Current State)</h2>
+                    <span class="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded">To Be Updated</span>
+                </div>
+                <p class="text-sm text-slate-500 mb-4">Upload the DDL file representing the database you want to patch.</p>
+                
+                <label class="block w-full">
+                    <input type="file" id="destFile" accept=".sql,.txt" class="block w-full text-sm text-slate-500
+                        file:mr-4 file:py-2 file:px-4
+                        file:rounded-full file:border-0
+                        file:text-sm file:font-semibold
+                        file:bg-slate-100 file:text-slate-700
+                        hover:file:bg-slate-200
+                        cursor-pointer
+                    "/>
+                </label>
+                <div id="destStatus" class="mt-2 text-xs text-slate-400">No file selected</div>
+            </div>
+        </div>
+
+        <!-- Options Section -->
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-8">
+            <h3 class="font-semibold text-lg text-slate-700 mb-4">
+                <i class="fa-solid fa-gear mr-2"></i>Options
+            </h3>
+            <div class="flex flex-wrap gap-6">
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="detectDrops" class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
+                    <span class="text-sm text-slate-700">Detect dropped columns/tables</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="preserveOrder" class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
+                    <span class="text-sm text-slate-700">Preserve column order</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Action Bar -->
+        <div class="flex justify-center mb-8">
+            <button id="generateBtn" onclick="processFiles()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-8 rounded-full shadow-lg transition-all transform hover:scale-105 flex items-center gap-2">
+                <span id="loadingSpinner" class="spinner hidden"></span>
+                <i class="fa-solid fa-bolt"></i> Generate Migration Script
+            </button>
+        </div>
+
+        <!-- Statistics Panel -->
+        <div id="statsPanel" class="hidden bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-8 stats-panel"></div>
+
+        <!-- Output Section -->
+        <div id="outputSection" class="hidden bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
+            <div class="bg-slate-800 px-6 py-3 flex justify-between items-center">
+                <h3 class="text-white font-medium"><i class="fa-solid fa-code mr-2"></i> Migration Script</h3>
+                <div class="flex gap-2">
+                    <button onclick="copyToClipboard()" class="text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded transition">
+                        <i class="fa-regular fa-copy"></i> Copy
+                    </button>
+                    <button onclick="downloadScript()" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition">
+                        <i class="fa-solid fa-download"></i> Download
+                    </button>
+                </div>
+            </div>
+            <div class="relative">
+                <pre id="outputContent" class="sql-code p-6 overflow-x-auto text-sm text-slate-800 bg-slate-50 min-h-[300px] language-sql"></pre>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/ddl-parser.js"></script>
+    <script src="js/schema-comparator.js"></script>
+    <script src="js/ui-handler.js"></script>
+</body>
+</html>
