@@ -37,16 +37,16 @@ For development and testing:
 
 ```bash
 # Install dependencies
-npm install
+pnpm install
 
 # Run tests
-npm test
+pnpm test
 
 # Run tests in watch mode
-npm run test:watch
+pnpm test:watch
 
 # Generate test coverage
-npm run test:coverage
+pnpm test:coverage
 ```
 
 ## **How to Use**
@@ -210,7 +210,7 @@ This project is built with:
 ### **Running Tests**
 
 ```bash
-npm test
+pnpm test
 ```
 
 ## **Contributing**

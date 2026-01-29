@@ -148,9 +148,9 @@ Since this is a client-side tool, CORS is not an issue. All processing happens i
 - [ ] Check that all external CDN resources are accessible
 - [ ] Test with various SQL file formats
 - [ ] Verify mobile responsiveness (if applicable)
-- [ ] Run tests: `npm test`
-- [ ] Check linting: `npm run lint`
-- [ ] Format code: `npm run format`
+- [ ] Run tests: `pnpm test`
+- [ ] Check linting: `pnpm run lint`
+- [ ] Format code: `pnpm run format`
 
 ## Production Optimizations (Optional)
 
