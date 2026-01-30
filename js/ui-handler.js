@@ -16,7 +16,7 @@ function initializeUI() {
         updateFileStatus(e.target, sourceStatus, sourceContainer);
         clearError(sourceContainer);
     });
-    
+
     destInput.addEventListener('change', (e) => {
         updateFileStatus(e.target, destStatus, destContainer);
         clearError(destContainer);
@@ -29,13 +29,13 @@ function initializeUI() {
     // Options toggle
     const detectDropsCheckbox = document.getElementById('detectDrops');
     const preserveOrderCheckbox = document.getElementById('preserveOrder');
-    
+
     if (detectDropsCheckbox) {
         detectDropsCheckbox.addEventListener('change', () => {
             // Option change will be used in next comparison
         });
     }
-    
+
     if (preserveOrderCheckbox) {
         preserveOrderCheckbox.addEventListener('change', () => {
             // Option change will be used in next comparison
@@ -54,18 +54,18 @@ function updateFileStatus(input, label, container) {
             <span class="text-blue-600 font-medium">${file.name}</span>
             <span class="text-slate-400 ml-2">(${fileSize})</span>
         `;
-        label.className = "mt-2 text-xs";
+        label.className = 'mt-2 text-xs';
         clearError(container);
     } else {
-        label.textContent = "No file selected";
-        label.className = "mt-2 text-xs text-slate-400";
+        label.textContent = 'No file selected';
+        label.className = 'mt-2 text-xs text-slate-400';
     }
 }
 
 /**
  * Setup drag and drop for file inputs
  */
-function setupDragAndDrop(input, container, statusLabel) {
+function setupDragAndDrop(input, container, _statusLabel) {
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
         container.addEventListener(eventName, preventDefaults, false);
     });
@@ -90,7 +90,7 @@ function setupDragAndDrop(input, container, statusLabel) {
     container.addEventListener('drop', (e) => {
         const dt = e.dataTransfer;
         const files = dt.files;
-        
+
         if (files.length > 0) {
             input.files = files;
             const event = new Event('change', { bubbles: true });
@@ -101,7 +101,9 @@ function setupDragAndDrop(input, container, statusLabel) {
 
 /**
  * Process files and generate migration script
+ * Called from HTML onclick handler
  */
+// eslint-disable-next-line no-unused-vars
 async function processFiles() {
     const sourceInput = document.getElementById('sourceFile');
     const destInput = document.getElementById('destFile');
@@ -171,13 +173,13 @@ async function processFiles() {
         outputSection.classList.remove('hidden');
         outputContent.textContent = migrationSql;
         outputContent.className = 'sql-code p-6 overflow-x-auto text-sm text-slate-800 bg-slate-50 min-h-[300px]';
-        
+
         // Update stats panel
         if (statsPanel) {
             statsPanel.classList.remove('hidden');
             updateStatsPanel(stats);
         }
-        
+
         // Apply syntax highlighting
         if (window.Prism) {
             Prism.highlightElement(outputContent);
@@ -185,10 +187,11 @@ async function processFiles() {
 
         // Scroll to result
         outputSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        
+
         showToast('Migration script generated successfully!', 'success');
 
     } catch (error) {
+        // eslint-disable-next-line no-console
         console.error('Error processing files:', error);
         showToast(`Error: ${error.message}`, 'error');
         showError(sourceContainer, 'An error occurred while processing. Check console for details.');
@@ -201,6 +204,9 @@ async function processFiles() {
  * Update statistics panel
  */
 function updateStatsPanel(stats) {
+    const statsPanel = document.getElementById('statsPanel');
+    if (!statsPanel) return;
+
     const statsHTML = `
         <div class="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
             <div class="bg-blue-50 p-3 rounded">
@@ -234,7 +240,9 @@ function updateStatsPanel(stats) {
 
 /**
  * Copy migration script to clipboard
+ * Called from HTML onclick handler
  */
+// eslint-disable-next-line no-unused-vars
 function copyToClipboard() {
     const content = document.getElementById('outputContent').textContent;
     navigator.clipboard.writeText(content).then(() => {
@@ -251,14 +259,16 @@ function copyToClipboard() {
             }, 2000);
         }
         showToast('Copied to clipboard!', 'success', 2000);
-    }).catch(err => {
+    }).catch(() => {
         showToast('Failed to copy to clipboard', 'error');
     });
 }
 
 /**
  * Download migration script
+ * Called from HTML onclick handler
  */
+// eslint-disable-next-line no-unused-vars
 function downloadScript() {
     const content = document.getElementById('outputContent').textContent;
     const blob = new Blob([content], { type: 'text/sql' });

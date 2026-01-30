@@ -286,4 +286,45 @@ describe('SchemaComparator', () => {
 
         expect(migration).toContain('No schema differences found');
     });
+
+    test('should drop existing PRIMARY KEY before adding new one when definition changes', () => {
+        sourceSchema = {
+            absence: {
+                columns: {
+                    user_id: { definition: 'int NOT NULL', type: 'int' },
+                    subject_id: { definition: 'int NOT NULL', type: 'int' },
+                    datetime: { definition: 'datetime NOT NULL', type: 'datetime' }
+                },
+                indexes: ['PRIMARY KEY (`user_id`,`subject_id`,`datetime`) USING BTREE'],
+                foreignKeys: [],
+                columnOrder: ['user_id', 'subject_id', 'datetime'],
+                full_create_stmt: 'CREATE TABLE absence (user_id int NOT NULL, subject_id int NOT NULL, datetime datetime NOT NULL, PRIMARY KEY (`user_id`,`subject_id`,`datetime`) USING BTREE);'
+            }
+        };
+        destSchema = {
+            absence: {
+                columns: {
+                    user_id: { definition: 'int NOT NULL', type: 'int' },
+                    subject_id: { definition: 'int NOT NULL', type: 'int' },
+                    teaching_hour_id: { definition: 'int NOT NULL DEFAULT \'0\'', type: 'int' },
+                    datetime: { definition: 'datetime NOT NULL', type: 'datetime' }
+                },
+                indexes: ['PRIMARY KEY (`user_id`,`subject_id`,`teaching_hour_id`,`datetime`)'],
+                foreignKeys: [],
+                columnOrder: ['user_id', 'subject_id', 'teaching_hour_id', 'datetime'],
+                full_create_stmt: 'CREATE TABLE absence (user_id int NOT NULL, subject_id int NOT NULL, teaching_hour_id int NOT NULL DEFAULT \'0\', datetime datetime NOT NULL, PRIMARY KEY (`user_id`,`subject_id`,`teaching_hour_id`,`datetime`));'
+            }
+        };
+
+        const comparator = new SchemaComparator(sourceSchema, destSchema);
+        const migration = comparator.compare();
+
+        // Should drop the old PRIMARY KEY before adding the new one
+        expect(migration).toContain('DROP PRIMARY KEY');
+        expect(migration).toContain('ADD PRIMARY KEY');
+        // Verify DROP comes before ADD
+        const dropIndex = migration.indexOf('DROP PRIMARY KEY');
+        const addIndex = migration.indexOf('ADD PRIMARY KEY');
+        expect(dropIndex).toBeLessThan(addIndex);
+    });
 });

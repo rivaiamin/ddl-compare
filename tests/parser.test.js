@@ -64,7 +64,7 @@ describe('DDLParser', () => {
 
         expect(schema.products.columns.price.type).toBe('decimal(10, 2)');
         expect(schema.products.columns.description.type).toBe('text');
-        expect(schema.products.columns.status.type).toBe("enum('active', 'inactive')");
+        expect(schema.products.columns.status.type).toBe('enum(\'active\', \'inactive\')');
     });
 
     test('should extract indexes', () => {
@@ -146,7 +146,7 @@ describe('DDLParser', () => {
         const schema = parser.parse();
 
         expect(schema.users.columns.id.default).toBe('0');
-        expect(schema.users.columns.name.default).toBe("'unknown'");
+        expect(schema.users.columns.name.default).toBe('\'unknown\'');
         expect(schema.users.columns.created_at.default).toBe('CURRENT_TIMESTAMP');
     });
 
