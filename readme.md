@@ -2,6 +2,9 @@
 
 A lightweight, client-side tool to compare two MySQL database schema files (DDL) and generate a migration script. This tool runs entirely in your browser using JavaScript—no data is uploaded to any server.
 
+<!-- add a screenshot of the tool -->
+![Screenshot of the tool](./examples/screenshot.jpg)
+
 ## **Features**
 
 * **Client-Side Execution:** Secure and private. Your SQL files are processed locally in your browser.  
