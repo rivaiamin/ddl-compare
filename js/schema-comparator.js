@@ -118,8 +118,8 @@ class SchemaComparator {
 
         if (srcPrimaryKey && dstPrimaryKey) {
             // Both have PRIMARY KEY - check if they differ
-            const srcPKNorm = this._normalizeIndex(srcPrimaryKey);
-            const dstPKNorm = this._normalizeIndex(dstPrimaryKey);
+            const srcPKNorm = this._normalizePrimaryKeyIndex(srcPrimaryKey);
+            const dstPKNorm = this._normalizePrimaryKeyIndex(dstPrimaryKey);
             if (srcPKNorm !== dstPKNorm) {
                 // PRIMARY KEY definition changed - must drop old one first
                 changes.push('DROP PRIMARY KEY');
@@ -204,11 +204,106 @@ class SchemaComparator {
     }
 
     _normalizeIndex(indexStr) {
-        return indexStr.toLowerCase().replace(/\s+/g, '').replace(/[`"']/g, '');
+        // For comparison we want to ignore constraint/index names for PRIMARY KEY and UNIQUE keys.
+        // MySQL allows different constraint/index names while still enforcing the same key columns.
+        if (this._isPrimaryKey(indexStr)) {
+            return this._normalizePrimaryKeyIndex(indexStr);
+        }
+        if (this._isUniqueIndex(indexStr)) {
+            return this._normalizeUniqueIndex(indexStr);
+        }
+
+        // For generic indexes, at least ignore a leading CONSTRAINT <name> wrapper.
+        const withoutConstraintPrefix = indexStr.replace(/^\s*CONSTRAINT\s+[`"]?\w+[`"]?\s+/i, '');
+
+        // MySQL often includes an optional USING clause (e.g. USING BTREE) in index definitions.
+        // We treat this as non-semantic for the purposes of "already exists" detection.
+        const withoutUsing = withoutConstraintPrefix.replace(/\s+USING\s+\w+/ig, '');
+
+        return withoutUsing.toLowerCase().replace(/\s+/g, '').replace(/[`"']/g, '');
     }
 
     _isPrimaryKey(indexStr) {
-        return indexStr.toUpperCase().trim().startsWith('PRIMARY KEY');
+        // Handles both:
+        //   PRIMARY KEY (`id`)
+        //   CONSTRAINT `pk_name` PRIMARY KEY (`id`)
+        return /\bPRIMARY\s+KEY\b/i.test(indexStr);
+    }
+
+    _isUniqueIndex(indexStr) {
+        // Handles both:
+        //   UNIQUE KEY `idx` (`col`)
+        //   UNIQUE INDEX `idx` (`col`)
+        //   UNIQUE (`col`)
+        //   CONSTRAINT `idx` UNIQUE (`col`)
+        const upper = indexStr.toUpperCase();
+        return /\bUNIQUE\b/i.test(upper) && (/\b(KEY|INDEX)\b/i.test(upper) || /\bUNIQUE\s*\(/i.test(upper));
+    }
+
+    _normalizeColumnList(colsStr) {
+        return String(colsStr)
+            .toLowerCase()
+            .replace(/[`"']/g, '')
+            .replace(/\s+/g, '');
+    }
+
+    _extractFirstParenthesized(str, startAt = 0) {
+        const s = String(str);
+        const openIdx = s.indexOf('(', startAt);
+        if (openIdx < 0) return null;
+
+        let depth = 0;
+        let inQuote = false;
+        let quoteChar = '';
+
+        for (let i = openIdx; i < s.length; i++) {
+            const ch = s[i];
+
+            if (['\'', '"', '`'].includes(ch)) {
+                if (!inQuote) {
+                    inQuote = true;
+                    quoteChar = ch;
+                } else if (ch === quoteChar) {
+                    inQuote = false;
+                }
+            }
+
+            if (inQuote) continue;
+
+            if (ch === '(') depth++;
+            else if (ch === ')') {
+                depth--;
+                if (depth === 0) {
+                    return s.substring(openIdx + 1, i);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    _normalizePrimaryKeyIndex(indexStr) {
+        const upper = indexStr.toUpperCase();
+        const pkPos = upper.indexOf('PRIMARY KEY');
+        const afterPk = pkPos >= 0 ? indexStr.substring(pkPos) : indexStr;
+        const cols = this._extractFirstParenthesized(afterPk);
+        if (!cols) {
+            // Fallback: old behaviour
+            return indexStr.toLowerCase().replace(/\s+/g, '').replace(/[`"']/g, '');
+        }
+        return `primarykey(${this._normalizeColumnList(cols)})`;
+    }
+
+    _normalizeUniqueIndex(indexStr) {
+        const upper = indexStr.toUpperCase();
+        const uniquePos = upper.indexOf('UNIQUE');
+        const afterUnique = uniquePos >= 0 ? indexStr.substring(uniquePos) : indexStr;
+        const cols = this._extractFirstParenthesized(afterUnique);
+        if (!cols) {
+            // Fallback: old behaviour
+            return indexStr.toLowerCase().replace(/\s+/g, '').replace(/[`"']/g, '');
+        }
+        return `uniquekey(${this._normalizeColumnList(cols)})`;
     }
 
     _extractPrimaryKey(indexes) {
