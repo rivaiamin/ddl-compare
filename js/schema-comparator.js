@@ -63,6 +63,7 @@ class SchemaComparator {
         const srcTable = this.source[tableName];
         const dstTable = this.dest[tableName];
         const changes = [];
+        const deferredAutoIncrementModifications = [];
 
         // 2. Missing Columns or Type Mismatches
         for (const colName in srcTable.columns) {
@@ -71,7 +72,12 @@ class SchemaComparator {
             if (!dstTable.columns[colName]) {
                 // Missing Column
                 this.stats.columnsAdded++;
-                let addStmt = `ADD COLUMN \`${colName}\` ${srcColData.definition}`;
+                const hasAutoIncrement = /\bAUTO_INCREMENT\b/i.test(srcColData.definition);
+                const safeDefinition = hasAutoIncrement
+                    ? this._stripAutoIncrement(srcColData.definition)
+                    : srcColData.definition;
+
+                let addStmt = `ADD COLUMN \`${colName}\` ${safeDefinition}`;
 
                 // Add column position if preserveColumnOrder is enabled
                 if (this.options.preserveColumnOrder && srcTable.columnOrder) {
@@ -85,6 +91,14 @@ class SchemaComparator {
                 }
 
                 changes.push(addStmt);
+
+                // MySQL requires AUTO_INCREMENT columns to be indexed at all times.
+                // In an ALTER TABLE statement, clauses are processed in order, so adding an AUTO_INCREMENT
+                // column before its key exists can fail. We add it without AUTO_INCREMENT first, then
+                // upgrade it after key changes in the same ALTER TABLE.
+                if (hasAutoIncrement) {
+                    deferredAutoIncrementModifications.push(`MODIFY COLUMN \`${colName}\` ${srcColData.definition}`);
+                }
             } else {
                 // Check Type and Default Value
                 const dstColData = dstTable.columns[colName];
@@ -189,6 +203,11 @@ class SchemaComparator {
             }
         }
 
+        // Apply deferred AUTO_INCREMENT modifications last (after PK/index changes)
+        if (deferredAutoIncrementModifications.length > 0) {
+            changes.push(...deferredAutoIncrementModifications);
+        }
+
         if (changes.length > 0) {
             this.migrationScript.push(`-- Changes for table \`${tableName}\``);
             this.migrationScript.push(`ALTER TABLE \`${tableName}\``);
@@ -201,6 +220,13 @@ class SchemaComparator {
 
     _normalizeType(typeStr) {
         return typeStr.toLowerCase().replace(/\s+/g, '').replace(/[`"']/g, '');
+    }
+
+    _stripAutoIncrement(definition) {
+        return String(definition)
+            .replace(/\bAUTO_INCREMENT\b/ig, '')
+            .replace(/\s+/g, ' ')
+            .trim();
     }
 
     _normalizeIndex(indexStr) {
