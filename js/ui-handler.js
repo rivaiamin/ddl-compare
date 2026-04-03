@@ -233,6 +233,10 @@ function updateStatsPanel(stats) {
                 <div class="text-purple-600 font-semibold">${stats.indexesAdded}</div>
                 <div class="text-slate-600 text-xs">Indexes Added</div>
             </div>
+            <div class="bg-amber-50 p-3 rounded">
+                <div class="text-amber-700 font-semibold">${stats.manualPkTables ?? 0}</div>
+                <div class="text-slate-600 text-xs">PK change (manual)</div>
+            </div>
         </div>
     `;
     statsPanel.innerHTML = statsHTML;

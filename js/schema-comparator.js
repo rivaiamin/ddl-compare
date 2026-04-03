@@ -17,7 +17,8 @@ class SchemaComparator {
             columnsAdded: 0,
             columnsModified: 0,
             columnsDropped: 0,
-            indexesAdded: 0
+            indexesAdded: 0,
+            manualPkTables: 0
         };
     }
 
@@ -64,6 +65,7 @@ class SchemaComparator {
         const dstTable = this.dest[tableName];
         const changes = [];
         const deferredAutoIncrementModifications = [];
+        const keyChanges = [];
 
         // 2. Missing Columns or Type Mismatches
         for (const colName in srcTable.columns) {
@@ -130,21 +132,32 @@ class SchemaComparator {
         const srcPrimaryKey = this._extractPrimaryKey(srcTable.indexes);
         const dstPrimaryKey = this._extractPrimaryKey(dstTable.indexes);
 
-        if (srcPrimaryKey && dstPrimaryKey) {
-            // Both have PRIMARY KEY - check if they differ
-            const srcPKNorm = this._normalizePrimaryKeyIndex(srcPrimaryKey);
-            const dstPKNorm = this._normalizePrimaryKeyIndex(dstPrimaryKey);
-            if (srcPKNorm !== dstPKNorm) {
-                // PRIMARY KEY definition changed - must drop old one first
-                changes.push('DROP PRIMARY KEY');
-                changes.push(`ADD ${srcPrimaryKey}`);
+        const pkColumnChangeManual =
+            Boolean(srcPrimaryKey && dstPrimaryKey) &&
+            this._normalizePrimaryKeyIndex(srcPrimaryKey) !== this._normalizePrimaryKeyIndex(dstPrimaryKey);
+
+        if (pkColumnChangeManual) {
+            this.stats.manualPkTables++;
+            this._emitManualPrimaryKeyMigrationNotice(tableName, dstPrimaryKey, srcPrimaryKey);
+        }
+
+        if (!pkColumnChangeManual) {
+            if (srcPrimaryKey && dstPrimaryKey) {
+                // Both have PRIMARY KEY - check if they differ
+                const srcPKNorm = this._normalizePrimaryKeyIndex(srcPrimaryKey);
+                const dstPKNorm = this._normalizePrimaryKeyIndex(dstPrimaryKey);
+                if (srcPKNorm !== dstPKNorm) {
+                    // PRIMARY KEY definition changed - must drop old one first
+                    keyChanges.push('DROP PRIMARY KEY');
+                    keyChanges.push(`ADD ${srcPrimaryKey}`);
+                }
+            } else if (srcPrimaryKey && !dstPrimaryKey) {
+                // Source has PRIMARY KEY but destination doesn't
+                keyChanges.push(`ADD ${srcPrimaryKey}`);
+            } else if (!srcPrimaryKey && dstPrimaryKey && this.options.detectDrops) {
+                // Source doesn't have PRIMARY KEY but destination does - drop it if detectDrops enabled
+                keyChanges.push('DROP PRIMARY KEY');
             }
-        } else if (srcPrimaryKey && !dstPrimaryKey) {
-            // Source has PRIMARY KEY but destination doesn't
-            changes.push(`ADD ${srcPrimaryKey}`);
-        } else if (!srcPrimaryKey && dstPrimaryKey && this.options.detectDrops) {
-            // Source doesn't have PRIMARY KEY but destination does - drop it if detectDrops enabled
-            changes.push('DROP PRIMARY KEY');
         }
 
         // 5. Missing Indexes (excluding PRIMARY KEY which is handled above)
@@ -203,18 +216,65 @@ class SchemaComparator {
             }
         }
 
-        // Apply deferred AUTO_INCREMENT modifications last (after PK/index changes)
-        if (deferredAutoIncrementModifications.length > 0) {
-            changes.push(...deferredAutoIncrementModifications);
+        // Combine key changes and deferred AUTO_INCREMENT modifications at the end
+        let filteredDeferred = deferredAutoIncrementModifications;
+        if (pkColumnChangeManual && srcPrimaryKey) {
+            const pkCols = new Set(
+                this._extractPrimaryKeyColumns(srcPrimaryKey).map(c => c.toLowerCase())
+            );
+            filteredDeferred = deferredAutoIncrementModifications.filter(stmt => {
+                const m = stmt.match(/^\s*MODIFY\s+COLUMN\s+[`"]?(\w+)[`"]?/i);
+                if (!m || !m[1]) return true;
+                return !pkCols.has(m[1].toLowerCase());
+            });
         }
+        const tailChanges = [...keyChanges, ...filteredDeferred];
 
-        if (changes.length > 0) {
-            this.migrationScript.push(`-- Changes for table \`${tableName}\``);
-            this.migrationScript.push(`ALTER TABLE \`${tableName}\``);
-            // Indent and join with commas
-            const indentedChanges = changes.map(c => '  ' + c).join(',\n');
-            this.migrationScript.push(indentedChanges + ';');
+        const hasAnyChanges = changes.length > 0 || tailChanges.length > 0;
+        if (pkColumnChangeManual && !hasAnyChanges) {
+            this.migrationScript.push(
+                '-- (No other column/index/FK differences; only PRIMARY KEY differs — migrate PK manually as above.)'
+            );
             this.migrationScript.push('');
+            return;
+        }
+        if (hasAnyChanges) {
+            // Some MySQL builds can fail with "Unknown column" if a PK references a column
+            // being added in the same ALTER TABLE. If the new PK uses a newly-added column,
+            // split into two statements:
+            //  1) add/modify columns (including adding the PK column without AUTO_INCREMENT)
+            //  2) drop/add PK and then add AUTO_INCREMENT via MODIFY
+            // MySQL can reject a single ALTER that combines ADD COLUMN with ADD PRIMARY KEY on that
+            // new column (ERROR 1054 Unknown column). Split whenever we mix ADD COLUMN with PK ops.
+            // Also split when _primaryKeyUsesNewColumn detects a new PK column (covers edge cases).
+            const hasAddColumn = changes.some(ch => /^\s*ADD\s+COLUMN\b/i.test(ch));
+            const shouldSplitForPk =
+                tailChanges.length > 0 &&
+                changes.length > 0 &&
+                keyChanges.length > 0 &&
+                (hasAddColumn || this._primaryKeyUsesNewColumn(srcPrimaryKey, dstTable, changes));
+
+            if (shouldSplitForPk) {
+                if (changes.length > 0) {
+                    this.migrationScript.push(`-- Changes for table \`${tableName}\``);
+                    this.migrationScript.push(`ALTER TABLE \`${tableName}\``);
+                    this.migrationScript.push(changes.map(c => '  ' + c).join(',\n') + ';');
+                    this.migrationScript.push('');
+                }
+
+                this.migrationScript.push(`-- Key changes for table \`${tableName}\``);
+                this.migrationScript.push(`ALTER TABLE \`${tableName}\``);
+                this.migrationScript.push(tailChanges.map(c => '  ' + c).join(',\n') + ';');
+                this.migrationScript.push('');
+            } else {
+                const allChanges = [...changes, ...tailChanges];
+                this.migrationScript.push(`-- Changes for table \`${tableName}\``);
+                this.migrationScript.push(`ALTER TABLE \`${tableName}\``);
+                // Indent and join with commas
+                const indentedChanges = allChanges.map(c => '  ' + c).join(',\n');
+                this.migrationScript.push(indentedChanges + ';');
+                this.migrationScript.push('');
+            }
         }
     }
 
@@ -227,6 +287,62 @@ class SchemaComparator {
             .replace(/\bAUTO_INCREMENT\b/ig, '')
             .replace(/\s+/g, ' ')
             .trim();
+    }
+
+    _extractPrimaryKeyColumns(primaryKeyStr) {
+        if (!primaryKeyStr) return [];
+        const upper = primaryKeyStr.toUpperCase();
+        const pkPos = upper.indexOf('PRIMARY KEY');
+        const afterPk = pkPos >= 0 ? primaryKeyStr.substring(pkPos) : primaryKeyStr;
+        const cols = this._extractFirstParenthesized(afterPk);
+        if (!cols) return [];
+        return this._normalizeColumnList(cols)
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean);
+    }
+
+    _formatPrimaryKeyColumnList(primaryKeyStr) {
+        const cols = this._extractPrimaryKeyColumns(primaryKeyStr);
+        if (cols.length === 0) return '(?)';
+        return '(' + cols.map(c => `\`${c}\``).join(', ') + ')';
+    }
+
+    _emitManualPrimaryKeyMigrationNotice(tableName, dstPrimaryKey, srcPrimaryKey) {
+        const dstCols = this._formatPrimaryKeyColumnList(dstPrimaryKey);
+        const srcCols = this._formatPrimaryKeyColumnList(srcPrimaryKey);
+        this.migrationScript.push('-- ----------------------------------------------------------------');
+        this.migrationScript.push(`-- [MANUAL PRIMARY KEY MIGRATION] Table \`${tableName}\``);
+        this.migrationScript.push(`-- Current (destination) PRIMARY KEY columns: ${dstCols}`);
+        this.migrationScript.push(`-- Target (source) PRIMARY KEY columns:     ${srcCols}`);
+        this.migrationScript.push('-- The PRIMARY KEY column set differs (rename, surrogate id, or composite change).');
+        this.migrationScript.push('-- That needs data migration and often FK / app updates; auto DROP/ADD PRIMARY KEY is skipped.');
+        this.migrationScript.push('-- Apply other changes below first, then migrate the PK yourself when ready.');
+        this.migrationScript.push('-- ----------------------------------------------------------------');
+        this.migrationScript.push('');
+    }
+
+    _primaryKeyUsesNewColumn(srcPrimaryKey, dstTable, plannedChanges) {
+        if (!srcPrimaryKey) return false;
+        const pkCols = this._extractPrimaryKeyColumns(srcPrimaryKey);
+        if (pkCols.length === 0) return false;
+
+        const addedCols = new Set();
+        for (const ch of plannedChanges) {
+            const m = ch.match(/^\s*ADD\s+COLUMN\s+[`"]?(\w+)[`"]?\s+/i);
+            if (m && m[1]) addedCols.add(m[1].toLowerCase());
+        }
+
+        const dstColKeysLower = dstTable?.columns
+            ? new Set(Object.keys(dstTable.columns).map(k => k.toLowerCase()))
+            : new Set();
+
+        for (const col of pkCols) {
+            const colLower = col.toLowerCase();
+            if (dstColKeysLower.has(colLower)) continue;
+            if (addedCols.has(colLower)) return true;
+        }
+        return false;
     }
 
     _normalizeIndex(indexStr) {
