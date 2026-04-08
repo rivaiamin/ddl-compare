@@ -354,6 +354,9 @@ class SchemaComparator {
         if (this._isUniqueIndex(indexStr)) {
             return this._normalizeUniqueIndex(indexStr);
         }
+        if (this._isForeignKey(indexStr)) {
+            return this._normalizeForeignKeyIndex(indexStr);
+        }
 
         // For generic indexes, at least ignore a leading CONSTRAINT <name> wrapper.
         const withoutConstraintPrefix = indexStr.replace(/^\s*CONSTRAINT\s+[`"]?\w+[`"]?\s+/i, '');
@@ -363,6 +366,10 @@ class SchemaComparator {
         const withoutUsing = withoutConstraintPrefix.replace(/\s+USING\s+\w+/ig, '');
 
         return withoutUsing.toLowerCase().replace(/\s+/g, '').replace(/[`"']/g, '');
+    }
+
+    _isForeignKey(indexStr) {
+        return /\bFOREIGN\s+KEY\b/i.test(indexStr);
     }
 
     _isPrimaryKey(indexStr) {
@@ -446,6 +453,49 @@ class SchemaComparator {
             return indexStr.toLowerCase().replace(/\s+/g, '').replace(/[`"']/g, '');
         }
         return `uniquekey(${this._normalizeColumnList(cols)})`;
+    }
+
+    _normalizeForeignKeyIndex(indexStr) {
+        // Goal: treat semantically equivalent FKs as equal even if:
+        // - constraint name differs
+        // - ON DELETE/ON UPDATE are omitted vs explicitly RESTRICT/NO ACTION
+        // - whitespace / quoting differs
+        //
+        // We normalize to:
+        //   foreignkey(<localCols>)-><refTable>(<refCols>)|delete=<action>|update=<action>
+        // Where <action> is normalized and defaults to RESTRICT.
+
+        const s = String(indexStr);
+        const noConstraint = s.replace(/^\s*CONSTRAINT\s+[`"]?\w+[`"]?\s+/i, '');
+        const upper = noConstraint.toUpperCase();
+
+        const fkPos = upper.indexOf('FOREIGN KEY');
+        const afterFk = fkPos >= 0 ? noConstraint.substring(fkPos) : noConstraint;
+
+        const localColsRaw = this._extractFirstParenthesized(afterFk);
+        const localCols = localColsRaw ? this._normalizeColumnList(localColsRaw) : '';
+
+        const refMatch = afterFk.match(/\bREFERENCES\s+[`"]?(\w+)[`"]?\s*\(/i);
+        const refTable = refMatch?.[1] ? refMatch[1].toLowerCase() : '';
+
+        const refParenStart = afterFk.search(/\bREFERENCES\s+[`"]?\w+[`"]?\s*\(/i);
+        const refColsRaw = refParenStart >= 0 ? this._extractFirstParenthesized(afterFk, refParenStart) : null;
+        const refCols = refColsRaw ? this._normalizeColumnList(refColsRaw) : '';
+
+        const onDeleteMatch = afterFk.match(/\bON\s+DELETE\s+(RESTRICT|CASCADE|SET\s+NULL|NO\s+ACTION)\b/i);
+        const onUpdateMatch = afterFk.match(/\bON\s+UPDATE\s+(RESTRICT|CASCADE|SET\s+NULL|NO\s+ACTION)\b/i);
+
+        const normalizeAction = (action) => {
+            if (!action) return 'restrict'; // MySQL default behaviour is effectively RESTRICT/NO ACTION
+            const a = String(action).toLowerCase().replace(/\s+/g, ' ').trim();
+            if (a === 'no action') return 'restrict';
+            return a;
+        };
+
+        const onDelete = normalizeAction(onDeleteMatch?.[1]);
+        const onUpdate = normalizeAction(onUpdateMatch?.[1]);
+
+        return `foreignkey(${localCols})->${refTable}(${refCols})|delete=${onDelete}|update=${onUpdate}`;
     }
 
     _extractPrimaryKey(indexes) {

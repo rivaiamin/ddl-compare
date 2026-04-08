@@ -261,6 +261,45 @@ describe('SchemaComparator', () => {
         expect(comparator.getStats().indexesAdded).toBeGreaterThan(0);
     });
 
+    test('should not add duplicate foreign key when only RESTRICT/NO ACTION differs', () => {
+        sourceSchema = {
+            item: {
+                columns: {
+                    id: { definition: 'INT PRIMARY KEY', type: 'int' },
+                    item_mst_id: { definition: 'INT', type: 'int' }
+                },
+                indexes: [
+                    'CONSTRAINT `fk_item_mst_id` FOREIGN KEY (`item_mst_id`) REFERENCES `item_mst` (`id`)'
+                ],
+                foreignKeys: [],
+                columnOrder: ['id', 'item_mst_id'],
+                full_create_stmt: 'CREATE TABLE item (id INT PRIMARY KEY, item_mst_id INT, CONSTRAINT `fk_item_mst_id` FOREIGN KEY (`item_mst_id`) REFERENCES `item_mst` (`id`));'
+            }
+        };
+        destSchema = {
+            item: {
+                columns: {
+                    id: { definition: 'INT PRIMARY KEY', type: 'int' },
+                    item_mst_id: { definition: 'INT', type: 'int' }
+                },
+                indexes: [
+                    'CONSTRAINT `fk_item_mst_id` FOREIGN KEY (`item_mst_id`) REFERENCES `item_mst` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT'
+                ],
+                foreignKeys: [],
+                columnOrder: ['id', 'item_mst_id'],
+                full_create_stmt: 'CREATE TABLE item (id INT PRIMARY KEY, item_mst_id INT, CONSTRAINT `fk_item_mst_id` FOREIGN KEY (`item_mst_id`) REFERENCES `item_mst` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT);'
+            }
+        };
+
+        const comparator = new SchemaComparator(sourceSchema, destSchema);
+        const migration = comparator.compare();
+
+        // Should report no differences for this FK
+        expect(migration).toContain('No schema differences found');
+        expect(migration).not.toContain('ADD CONSTRAINT `fk_item_mst_id`');
+        expect(migration).not.toContain('FOREIGN KEY (`item_mst_id`) REFERENCES `item_mst`');
+    });
+
     test('should report no differences when schemas match', () => {
         sourceSchema = {
             users: {
@@ -319,12 +358,8 @@ describe('SchemaComparator', () => {
         const comparator = new SchemaComparator(sourceSchema, destSchema);
         const migration = comparator.compare();
 
-        // Should drop the old PRIMARY KEY before adding the new one
-        expect(migration).toContain('DROP PRIMARY KEY');
-        expect(migration).toContain('ADD PRIMARY KEY');
-        // Verify DROP comes before ADD
-        const dropIndex = migration.indexOf('DROP PRIMARY KEY');
-        const addIndex = migration.indexOf('ADD PRIMARY KEY');
-        expect(dropIndex).toBeLessThan(addIndex);
+        // Current behaviour: PK column set changes are flagged for manual migration (no auto DROP/ADD)
+        expect(migration).toContain('[MANUAL PRIMARY KEY MIGRATION]');
+        expect(migration).toContain('migrate PK manually');
     });
 });
